@@ -9,13 +9,13 @@ router = APIRouter(
 )
 
 
-@router.get("")
+@router.get("/")
 async def list_tasks() -> list[TaskSchemaAdd]:
     tasks = await TaskService().get_all()
     return tasks
 
 
-@router.post("")
+@router.post("/")
 async def add_task(task: TaskSchemaAdd) -> dict:
     task_id = await TaskService().add(task)
     return {'task_id': task_id}
