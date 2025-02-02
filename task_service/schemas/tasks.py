@@ -8,6 +8,17 @@ class TaskSchemaAdd(BaseModel):
     assignee_id: int | None
 
 
+class UserSchemaAdd(BaseModel):
+    name: str
+    password: str
+
+
+class UserSchema(UserSchemaAdd):
+    id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class TaskSchema(TaskSchemaAdd):
     id: int
 
