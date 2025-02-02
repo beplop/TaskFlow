@@ -49,8 +49,7 @@ async def register(user: UserSchemaAdd):
         result = await session.execute(stmt)
         await session.commit()
         # return result.scalar_one()
-        return {"username": user_dict['name']}
-    raise HTTPException(status_code=401, detail="Invalid")
+    return {"username": user_dict['name']}
 
 @router.get("/verify")
 def verify_token(token: str):
@@ -61,6 +60,14 @@ def verify_token(token: str):
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+@router.get("/send_user")
+async def send_user() -> list[UserSchema]:
+    async with async_session_maker() as session:
+        stmt = select(UsersModel)
+        result = await session.execute(stmt)
+        result_schemas = [UserSchema.model_validate(row[0]) for row in result.all()]
+    return result_schemas
 
 # @asynccontextmanager
 # async def lifespan(app: FastAPI):
