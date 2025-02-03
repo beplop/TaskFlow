@@ -28,4 +28,4 @@ async def add_task(task: TaskSchemaAdd) -> dict:
 async def get_users() -> list[UserSchema]:
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{AUTH_SERVICE_URL}/send_user")
-    return response.json()
+        return response.json()
