@@ -2,11 +2,7 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta
 import jwt
 from auth_service.db.redis import redis
-
-SECRET_KEY = "supersecret"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+from auth_service.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -22,23 +18,26 @@ class AuthService:
 
     @staticmethod
     async def create_access_token(data: dict):
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.utcnow() + timedelta(minutes=settings.auth_jwt.access_token_expire_minutes)
         to_encode = data.copy()
         to_encode.update({"exp": expire})
-        token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        token = jwt.encode(to_encode,
+                           settings.auth_jwt.private_key_path.read_text(),
+                           algorithm=settings.auth_jwt.algorithm)
 
-        await redis.setex(f"access_token:{data['sub']}", ACCESS_TOKEN_EXPIRE_MINUTES * 60, token)
+        await redis.setex(f"access_token:{data['sub']}", settings.auth_jwt.access_token_expire_minutes * 60, token)
 
         return token
 
     @staticmethod
     async def create_refresh_token(data: dict):
-        expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        expire = datetime.utcnow() + timedelta(days=settings.auth_jwt.refresh_token_expire_days)
         to_encode = data.copy()
         to_encode.update({"exp": expire})
-        token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        token = jwt.encode(to_encode, settings.auth_jwt.private_key_path.read_text(),
+                           algorithm=settings.auth_jwt.algorithm)
 
-        await redis.setex(f"refresh_token:{data['sub']}", REFRESH_TOKEN_EXPIRE_DAYS * 86400, token)
+        await redis.setex(f"refresh_token:{data['sub']}", settings.auth_jwt.refresh_token_expire_days * 86400, token)
 
         return token
 

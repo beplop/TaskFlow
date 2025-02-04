@@ -1,8 +1,12 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Form, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt import InvalidTokenError
 from pydantic import BaseModel
 import datetime
+
+from auth_service.config import settings
 from auth_service.db.redis import redis
 import jwt
 
@@ -16,35 +20,71 @@ from auth_service.db.db import (create_tables, delete_tables, #get_async_session
                                 async_session_maker)
 from auth_service.schemas.tokens import TokenSchema, RefreshTokenSchema
 
-from auth_service.schemas.users import UserSchema, UserSchemaAdd
+from auth_service.schemas.users import UserSchema, AddUserSchema
 
 router = APIRouter(
     prefix="/auth",
     tags=["Auth"],
 )
 
+http_bearer = HTTPBearer()
 
-# @router.post("/login")
-# async def login(user: UserSchemaAdd):
-#     async with async_session_maker() as session:
-#         stmt = select(UsersModel).where(UsersModel.name == user.name)
-#         result = await session.execute(stmt)
-#         user_record = result.scalar_one_or_none()
-#         if user_record and user_record.password == user.password:
-#             return {"token": create_token(user.username)}
-#     raise HTTPException(status_code=401, detail="Invalid credentials")
 
+async def get_current_token_payload(
+    credentials: HTTPAuthorizationCredentials = Depends(http_bearer),
+) -> str:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.auth_jwt.public_key_path.read_text(),
+                             algorithms=[settings.auth_jwt.algorithm])
+        sub = payload.get("sub")
+        if not (token_in_redis := await AuthService.get_token_from_redis(sub)):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+        if token_in_redis != token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"invalid token error",
+        )
+    return sub
+
+
+async def get_current_auth_user(
+    sub: dict = Depends(get_current_token_payload),
+) -> UserSchema:
+    async with async_session_maker() as session:
+        result = await session.execute(select(UsersModel).where(UsersModel.name == sub))
+        user_in_db = result.scalar_one_or_none()
+        if user_in_db:
+            return UserSchema.model_validate(user_in_db)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="token invalid (user not found)",
+    )
+
+
+@router.get("/me")
+def auth_user_check_self_info(
+    user: UserSchema = Depends(get_current_auth_user),
+):
+    return {
+        "username": user.name,
+    }
 
 @router.post("/login", response_model=TokenSchema)
-async def login(user: UserSchemaAdd):
+async def login(
+        username: str = Form(),
+        password: str = Form(),
+        ):
     async with async_session_maker() as session:
-        result = await session.execute(select(UsersModel).where(UsersModel.name == user.name))
+        result = await session.execute(select(UsersModel).where(UsersModel.name == username))
         db_user = result.scalar_one_or_none()
-        if not db_user or not AuthService.verify_password(user.password, db_user.password):
+        if not db_user or not AuthService.verify_password(password, db_user.password):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        access_token = await AuthService.create_access_token(data={"sub": db_user.username})
-        refresh_token = await AuthService.create_refresh_token(data={"sub": db_user.username})
+        access_token = await AuthService.create_access_token(data={"sub": db_user.name})
+        refresh_token = await AuthService.create_refresh_token(data={"sub": db_user.name})
 
         return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
@@ -58,10 +98,9 @@ async def logout(username: str):
 @router.post("/refresh", response_model=TokenSchema)
 async def refresh_token(refresh_data: RefreshTokenSchema):
     token = refresh_data.refresh_token
-    ALGORITHM = "HS256"
-    SECRET_KEY = "supersecret"
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.auth_jwt.public_key_path.read_text(),
+                             algorithms=[settings.auth_jwt.algorithm])
         username = payload.get("sub")
 
         redis_token = await redis.get(f"refresh_token:{username}")
@@ -77,7 +116,7 @@ async def refresh_token(refresh_data: RefreshTokenSchema):
 
 
 @router.post("/register", response_model=TokenSchema)
-async def register(user: UserSchemaAdd):
+async def register(user: AddUserSchema):
     async with async_session_maker() as session:
         result = await session.execute(select(UsersModel).where(UsersModel.name == user.name))
         existing_user = result.scalar_one_or_none()
@@ -94,15 +133,6 @@ async def register(user: UserSchemaAdd):
 
         return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
-# @router.get("/verify")
-# def verify_token(token: str):
-#     try:
-#         decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-#         return {"username": decoded["sub"]}
-#     except jwt.ExpiredSignatureError:
-#         raise HTTPException(status_code=401, detail="Token expired")
-#     except jwt.InvalidTokenError:
-#         raise HTTPException(status_code=401, detail="Invalid token")
 
 @router.get("/send_user")
 async def send_user() -> list[UserSchema]:
